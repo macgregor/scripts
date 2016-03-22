@@ -1,2 +1,2 @@
-.pyc
-names_list
+*.pyc
+**/name_lists/

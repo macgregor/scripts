@@ -1,0 +1,18 @@
+- url: http://fantasynamegenerators.com/elf_names.php
+  selector: 'div #result'
+  filename: name_lists/elves.txt
+- url: http://fantasynamegenerators.com/half-elf-names.php
+  selector: 'div #result'
+  filename: name_lists/elves.txt
+- url: http://fantasynamegenerators.com/hobbit_names.php
+  selector: 'div #result'
+  filename: name_lists/halflings.txt
+- url: http://fantasynamegenerators.com/knight-names.php
+  selector: 'div #result'
+  filename: name_lists/paladins.txt
+- url: http://fantasynamegenerators.com/orc_names.php
+  selector: 'div #result'
+  filename: name_lists/orcs.txt
+- url: http://fantasynamegenerators.com/barbarian-names.php
+  selector: 'div #result'
+  filename: name_lists/barbarians.txt
