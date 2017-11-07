@@ -83,12 +83,14 @@ class Entry(SummaryNode):
         return '* [{}]({})'.format(self.get_title(), make_relative(self.find_root().abs_path, self.abs_path))
 
 class Section(SummaryNode):
+
     def __init__(self, abs_path, parent=None):
         super(Section, self).__init__(abs_path, parent)
 
     def get_title(self):
         filename = self.abs_path.split(os.path.sep)[-1]
-        return filename
+        filename = filename.replace('_', ' ').replace('-', ' ')
+        return filename.title()
 
     def render(self):
         return '\n{} {}'.format('#'*(self.depth+1), self.get_title())
