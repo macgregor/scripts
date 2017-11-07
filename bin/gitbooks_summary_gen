@@ -1,0 +1,139 @@
+#!/usr/bin/env python
+from __future__ import print_function
+import os, argparse, sys, re, fnmatch, json
+from anytree import NodeMixin, RenderTree, ContStyle, PreOrderIter
+
+VERBOSE = False
+
+class ExitCodes:
+    GITBOOK_NOT_FOUND = 1
+
+def setup_arg_parser():
+    parser = argparse.ArgumentParser(prog='gitbook summary generator', description='generate SUMMARY.md file for a gitbook')
+    parser.add_argument('directory', default='./', help='directory containing gitbook to generate a SUMMARY.md for')
+    parser.add_argument('-v', action='store_true', default=False, help='enable verbose output')
+    parser.add_argument('--exclude', nargs='+', help='list of file patterns to exclude in search')
+    return parser
+
+def load_gitbook_json_config(args):
+    if not os.path.isfile(os.path.join(args.directory, "book.json")):
+        log('book.json not found in {}, using default/cli configuration'.format(args.directory))
+    else:
+        with open(os.path.join(args.directory, "book.json")) as f:
+            data = json.load(f)
+            try:
+                if args.exclude is None:
+                    setattr(args, 'exclude', data['pluginsConfig']['gitbooks-summary-gen']['exclude'])
+            except KeyError as e:
+                log('error loading gitbook book.json config: {}'.format(e))
+
+def log(msg):
+    if VERBOSE:
+        print(msg)
+
+def make_relative(root, abs_path):
+    return os.path.relpath(abs_path, os.path.commonprefix([abs_path, root]))
+
+def should_exclude(directory, filename, exclusions):
+    if filename[0] == '.':
+        return True
+
+    for exclusion in exclusions:
+        if fnmatch.fnmatch(filename, exclusion):
+            return True
+
+    if os.path.isfile(os.path.join(directory, filename)) and not fnmatch.fnmatch(filename, '*.md'):
+        return True
+
+    return False
+
+class SummaryNode(NodeMixin, object):
+
+    def __init__(self, abs_path, parent=None):
+        super(SummaryNode, self).__init__()
+        self.abs_path = abs_path
+        self.parent = parent
+
+    def find_root(self):
+        if self.parent == None:
+            return self
+        else:
+            return self.parent.find_root()
+
+    def __str__(self):
+        return self.abs_path.split(os.path.sep)[-1]
+
+    def __repr__(self):
+        return str(self)
+
+
+class Entry(SummaryNode):
+    TITLE_REGEX = '^#{1}(.*)$'
+    def __init__(self, abs_path, parent=None):
+        super(Entry, self).__init__(abs_path, parent)
+
+    def get_title(self):
+        with open(self.abs_path) as f:
+            for line in f:
+                match = re.search(Entry.TITLE_REGEX, line)
+                if match is not None:
+                    return match.group(1)
+
+    def render(self):
+        return '* [{}]({})'.format(self.get_title(), make_relative(self.find_root().abs_path, self.abs_path))
+
+class Section(SummaryNode):
+    def __init__(self, abs_path, parent=None):
+        super(Section, self).__init__(abs_path, parent)
+
+    def get_title(self):
+        filename = self.abs_path.split(os.path.sep)[-1]
+        return filename
+
+    def render(self):
+        return '\n{} {}'.format('#'*(self.depth+1), self.get_title())
+
+def parse_directory_structure(directory, exclude=[], parent=None, depth=0):
+    section = Section(directory, parent=parent)
+
+    try:
+        content = [os.path.join(directory, x) for x in os.listdir(directory) if not should_exclude(directory, x, exclude)]
+    except OSError:
+        print("# problem with {0}".format(directory), file=sys.stderr)
+        return
+
+    dirs = sorted([x for x in content if os.path.isdir(x)])
+    files = sorted([x for x in content if os.path.isfile(x)])
+
+    for f in files:
+        if not os.path.islink(f):
+            entry = Entry(f, parent=section)
+
+    for d in dirs:
+        if not os.path.islink(d):
+            parse_directory_structure(d, exclude=exclude, parent=section, depth=depth + 1)
+
+    return section
+
+if __name__ == '__main__':
+    arg_parser = setup_arg_parser()
+    args = arg_parser.parse_args()
+    VERBOSE = args.v
+
+    gitbook_dir = os.path.abspath(args.directory)
+    if not os.path.isdir(gitbook_dir):
+        print('gitbook directory doesnt exist or isnt a directory', file=sys.stderr)
+        sys.exit(ExitCodes.GITBOOK_NOT_FOUND)
+
+    load_gitbook_json_config(args)
+
+    exclusions = []
+    if args.exclude:
+        exclusions = args.exclude
+    log(exclusions)
+
+    root_section = parse_directory_structure(gitbook_dir, exclude=exclusions)
+    log(RenderTree(root_section, style=ContStyle()))
+
+    for node in PreOrderIter(root_section):
+        print(node.render())
