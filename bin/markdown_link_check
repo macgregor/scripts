@@ -15,10 +15,10 @@ RELATIVE_LINK_ERRORS = []
 VERBOSE = False
 
 def setup_arg_parser():
-    parser = argparse.ArgumentParser(prog='markdown link checker', description='traverse a directory structure for markdown files and validate links contained within')
-    parser.add_argument('directory', help='directory to containing files to validate')
+    parser = argparse.ArgumentParser(prog='markdown_link_check', formatter_class=argparse.ArgumentDefaultsHelpFormatter, description='Traverse a directory structure for markdown files and validate links contained within. If the link is a relative file path, it will validate the it goes to an actual file on the filesystem. If the link is a url, you can optionally hit the webpage to see if its alive.')
+    parser.add_argument('-d', '--directory', default=os.getcwd(), help='directory containing gitbook to generate a SUMMARY.md for.')
     parser.add_argument('--include-hidden', action='store_true', default=False, help='include hidden (files and dirs that start with \'.\') to search')
-    parser.add_argument('--match', default='*.md', help='re pattern to find files to validate, defaults to *.md')
+    parser.add_argument('--match', default='*.md', help='re pattern to find files to validate')
     parser.add_argument('--validate-website', action='store_true', default=False, help='whether to validate that an http url is alive')
     parser.add_argument('-v', action='store_true', default=False, help='enable verbose output')
     return parser
