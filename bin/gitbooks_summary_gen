@@ -8,24 +8,62 @@ VERBOSE = False
 class ExitCodes:
     GITBOOK_NOT_FOUND = 1
 
-def setup_arg_parser():
-    parser = argparse.ArgumentParser(prog='gitbook summary generator', description='generate SUMMARY.md file for a gitbook')
-    parser.add_argument('directory', default='./', help='directory containing gitbook to generate a SUMMARY.md for')
-    parser.add_argument('-v', action='store_true', default=False, help='enable verbose output')
-    parser.add_argument('--exclude', nargs='+', help='list of file patterns to exclude in search')
-    return parser
+class Config:
+    DEFAULT_GITBOOK_DIR = os.getcwd()
+    DEFAULT_ENTRY_TITLE_REGEX = '^#{1}(.*)$'
+    ARG_KEYS = ['exclude', 'cleanup-section-names', 'strip-numbers', 'entry-title-regex']
 
-def load_gitbook_json_config(args):
-    if not os.path.isfile(os.path.join(args.directory, "book.json")):
-        log('book.json not found in {}, using default/cli configuration'.format(args.directory))
-    else:
-        with open(os.path.join(args.directory, "book.json")) as f:
-            data = json.load(f)
+    def __init__(self):
+        self.gitbook_dir = Config.DEFAULT_GITBOOK_DIR
+        self.exclude = []
+        self.cleanup_section_names = False
+        self.strip_numbers = False
+        self.entry_title_regex = Config.DEFAULT_ENTRY_TITLE_REGEX
+
+    def load(self):
+        arg_parser = self.setup_arg_parser()
+        args = arg_parser.parse_args()
+
+        global VERBOSE
+        VERBOSE = args.v
+
+        if not os.path.isdir(self.gitbook_dir):
+            print('gitbook directory doesnt exist or isnt a directory', file=sys.stderr)
+            sys.exit(ExitCodes.GITBOOK_NOT_FOUND)
+
+        self.load_gitbook_json_config()
+        self.load_arg_parse_config(args)
+
+    def setup_arg_parser(self):
+        parser = argparse.ArgumentParser(prog='gitbooks_summary_gen', description='generate SUMMARY.md file for a gitbook. Arguments can be specified in a gitbook\'s book.json file. Arguments passed via command line will override any specified in book.json. Directory names will be used to as section headings, all .md files will be considered entries and be made into a bulletted list of links.')
+        parser.add_argument('-d', '--directory', help='directory containing gitbook to generate a SUMMARY.md for. (default: {})'.format(Config.DEFAULT_GITBOOK_DIR))
+        parser.add_argument('-v', action='store_true', default=False, help='Enable verbose output. (default: False)')
+        parser.add_argument('--exclude', nargs='+', help='List of file patterns to exclude in search. Uses fnmatch under the hood which allows use of Unix shell-style wildcards. See https://docs.python.org/3.4/library/fnmatch.html. (book.json path: pluginsConfig.gitbooks-summary-gen.exclude). (default: None)')
+        parser.add_argument('--cleanup-section-names', action='store_true', default=None, help='Whether or not to cleanup directory names when using them as section headers. If set, will replace common word seperators with spaces, uppercase words to make it look like a title, e.g. cooking-journal becomes Cooking Journal. (book.json path: pluginsConfig.gitbooks-summary-gen.cleanup-section-names). (default: False)')
+        parser.add_argument('--strip-numbers', action='store_true', default=None, help='Whether or not to remove numbers in filenames when using them for titles. Numbers can be used to force order in the summary, but might not look nice. This will turn \'1 foo\' into \'foo\'. Directories that are entirely numbers will be ignored, for example storing files in 2017/ will keep the header \'2017\'. (book.json path: pluginsConfig.gitbooks-summary-gen.strip-numbers). (default: False)')
+        parser.add_argument('--entry-title-regex', help='Titles for entries are determined by reading the file line by line until a line matches a regular expression with a capturing group. By default it looks for a line like \'# foobar\', foobar would be extracted and used as the title for the link. (book.json path: pluginsConfig.gitbooks-summary-gen.entry-title-regex). (default: \'{}\')'.format(Config.DEFAULT_ENTRY_TITLE_REGEX))
+        return parser
+
+    def load_gitbook_json_config(self):
+        if not os.path.isfile(os.path.join(self.gitbook_dir, "book.json")):
+            log('book.json not found in {}, using default/cli configuration'.format(args.directory))
+        else:
+            with open(os.path.join(self.gitbook_dir, "book.json")) as f:
+                data = json.load(f)
+                for key in Config.ARG_KEYS:
+                    try:
+                        setattr(self, key.replace('-', '_'), data['pluginsConfig']['gitbooks-summary-gen'][key])
+                    except KeyError as e:
+                        log('error loading \'pluginsConfig.gitbooks-summary-gen.{}\' book.json config: {}'.format(key, e))
+
+    def load_arg_parse_config(self, args):
+        for key in Config.ARG_KEYS:
             try:
-                if args.exclude is None:
-                    setattr(args, 'exclude', data['pluginsConfig']['gitbooks-summary-gen']['exclude'])
-            except KeyError as e:
-                log('error loading gitbook book.json config: {}'.format(e))
+                cli_override = getattr(args, key.replace('-', '_'))
+                if cli_override is not None:
+                    setattr(self, key.replace('-', '_'), cli_override)
+            except AttributeError as e:
+                pass
 
 def log(msg):
     if VERBOSE:
@@ -68,32 +106,39 @@ class SummaryNode(NodeMixin, object):
 
 
 class Entry(SummaryNode):
-    TITLE_REGEX = '^#{1}(.*)$'
     def __init__(self, abs_path, parent=None):
         super(Entry, self).__init__(abs_path, parent)
 
-    def get_title(self):
+    def get_title(self, config):
         with open(self.abs_path) as f:
             for line in f:
-                match = re.search(Entry.TITLE_REGEX, line)
+                match = re.search(config.entry_title_regex, line)
                 if match is not None:
                     return match.group(1)
 
-    def render(self):
-        return '* [{}]({})'.format(self.get_title(), make_relative(self.find_root().abs_path, self.abs_path))
+    def render(self, config):
+        return '* [{}]({})'.format(self.get_title(config), make_relative(self.find_root().abs_path, self.abs_path))
 
 class Section(SummaryNode):
+    STARTS_WITH_NUMBER_REGEX = '[0-9]*(.*)'
 
     def __init__(self, abs_path, parent=None):
         super(Section, self).__init__(abs_path, parent)
 
-    def get_title(self):
+    def get_title(self, config):
         filename = self.abs_path.split(os.path.sep)[-1]
-        filename = filename.replace('_', ' ').replace('-', ' ')
-        return filename.title()
+        if config.strip_numbers:
+            no_numbers = re.search(Section.STARTS_WITH_NUMBER_REGEX, filename).group(1)
+            if len(no_numbers) > 0:
+                filename = re.search(Section.STARTS_WITH_NUMBER_REGEX, filename).group(1)
 
-    def render(self):
-        return '\n{} {}'.format('#'*(self.depth+1), self.get_title())
+        if config.cleanup_section_names:
+            filename = filename.replace('_', ' ').replace('-', ' ')
+            filename = filename.title()
+        return filename.strip()
+
+    def render(self, config):
+        return '\n{} {}'.format('#'*(self.depth+1), self.get_title(config))
 
 def parse_directory_structure(directory, exclude=[], parent=None, depth=0):
     section = Section(directory, parent=parent)
@@ -118,24 +163,11 @@ def parse_directory_structure(directory, exclude=[], parent=None, depth=0):
     return section
 
 if __name__ == '__main__':
-    arg_parser = setup_arg_parser()
-    args = arg_parser.parse_args()
-    VERBOSE = args.v
+    config = Config()
+    config.load()
 
-    gitbook_dir = os.path.abspath(args.directory)
-    if not os.path.isdir(gitbook_dir):
-        print('gitbook directory doesnt exist or isnt a directory', file=sys.stderr)
-        sys.exit(ExitCodes.GITBOOK_NOT_FOUND)
-
-    load_gitbook_json_config(args)
-
-    exclusions = []
-    if args.exclude:
-        exclusions = args.exclude
-    log(exclusions)
-
-    root_section = parse_directory_structure(gitbook_dir, exclude=exclusions)
+    root_section = parse_directory_structure(config.gitbook_dir, exclude=config.exclude)
     log(RenderTree(root_section, style=ContStyle()))
 
     for node in PreOrderIter(root_section):
-        print(node.render())
+        print(node.render(config))
