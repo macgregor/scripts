@@ -11,7 +11,7 @@ class ExitCodes:
 class Config:
     DEFAULT_GITBOOK_DIR = os.getcwd()
     DEFAULT_ENTRY_TITLE_REGEX = '^#{1}(.*)$'
-    ARG_KEYS = ['exclude', 'cleanup-section-names', 'strip-numbers', 'entry-title-regex']
+    ARG_KEYS = ['exclude', 'cleanup-section-names', 'strip-numbers', 'entry-title-regex', 'sort-entry-by-title']
 
     def __init__(self):
         self.gitbook_dir = Config.DEFAULT_GITBOOK_DIR
@@ -19,6 +19,7 @@ class Config:
         self.cleanup_section_names = False
         self.strip_numbers = False
         self.entry_title_regex = Config.DEFAULT_ENTRY_TITLE_REGEX
+        self.sort_entry_by_title = False
 
     def load(self):
         arg_parser = self.setup_arg_parser()
@@ -42,6 +43,7 @@ class Config:
         parser.add_argument('--cleanup-section-names', action='store_true', default=None, help='Whether or not to cleanup directory names when using them as section headers. If set, will replace common word seperators with spaces, uppercase words to make it look like a title, e.g. cooking-journal becomes Cooking Journal. (book.json path: pluginsConfig.gitbooks-summary-gen.cleanup-section-names). (default: False)')
         parser.add_argument('--strip-numbers', action='store_true', default=None, help='Whether or not to remove numbers in filenames when using them for titles. Numbers can be used to force order in the summary, but might not look nice. This will turn \'1 foo\' into \'foo\'. Directories that are entirely numbers will be ignored, for example storing files in 2017/ will keep the header \'2017\'. (book.json path: pluginsConfig.gitbooks-summary-gen.strip-numbers). (default: False)')
         parser.add_argument('--entry-title-regex', help='Titles for entries are determined by reading the file line by line until a line matches a regular expression with a capturing group. By default it looks for a line like \'# foobar\', foobar would be extracted and used as the title for the link. (book.json path: pluginsConfig.gitbooks-summary-gen.entry-title-regex). (default: \'{}\')'.format(Config.DEFAULT_ENTRY_TITLE_REGEX))
+        parser.add_argument('--sort-entry-by-title', action='store_true', default=None, help='If set, sort entries in the summary alphabetically by their extracted title (see --entry-title-regex) rather than alphabetically by their file name. Only applies to entries (.md files), not to section headings (directories). (book.json path: pluginsConfig.gitbooks-summary-gen.sort-entry-by-title). (default: False)')
         return parser
 
     def load_gitbook_json_config(self):
@@ -114,7 +116,7 @@ class Entry(SummaryNode):
             for line in f:
                 match = re.search(config.entry_title_regex, line)
                 if match is not None:
-                    return match.group(1)
+                    return match.group(1).strip()
 
     def render(self, config):
         return '* [{}]({})'.format(self.get_title(config), make_relative(self.find_root().abs_path, self.abs_path))
@@ -169,5 +171,15 @@ if __name__ == '__main__':
     root_section = parse_directory_structure(config.gitbook_dir, exclude=config.exclude)
     log(RenderTree(root_section, style=ContStyle()))
 
-    for node in PreOrderIter(root_section):
+    rendered = []
+    for node in PreOrderIter(root_section, filter_=lambda n: n not in rendered):
         print(node.render(config))
+        if config.sort_entry_by_title:
+            if isinstance(node, Section):
+                titles = []
+                for child in node.children:
+                    if isinstance(child, Entry):
+                        titles.append(child.render(config))
+                        rendered.append(child)
+                for title in sorted(titles):
+                    print(title)
