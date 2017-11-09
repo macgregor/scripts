@@ -36,7 +36,7 @@ class Config:
         self.load_arg_parse_config(args)
 
     def setup_arg_parser(self):
-        parser = argparse.ArgumentParser(prog='gitbooks_summary_gen', description='generate SUMMARY.md file for a gitbook. Arguments can be specified in a gitbook\'s book.json file. Arguments passed via command line will override any specified in book.json. Directory names will be used to as section headings, all .md files will be considered entries and be made into a bulletted list of links.')
+        parser = argparse.ArgumentParser(prog='gitbooks-summary-gen', description='generate SUMMARY.md file for a gitbook. Arguments can be specified in a gitbook\'s book.json file. Arguments passed via command line will override any specified in book.json. Directory names will be used to as section headings, all .md files will be considered entries and be made into a bulletted list of links.')
         parser.add_argument('-d', '--directory', help='directory containing gitbook to generate a SUMMARY.md for. (default: {})'.format(Config.DEFAULT_GITBOOK_DIR))
         parser.add_argument('-v', action='store_true', default=False, help='Enable verbose output. (default: False)')
         parser.add_argument('--exclude', nargs='+', help='List of file patterns to exclude in search. Uses fnmatch under the hood which allows use of Unix shell-style wildcards. See https://docs.python.org/3.4/library/fnmatch.html. (book.json path: pluginsConfig.gitbooks-summary-gen.exclude). (default: None)')
