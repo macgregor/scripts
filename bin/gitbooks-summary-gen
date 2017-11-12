@@ -5,9 +5,6 @@ from anytree import NodeMixin, RenderTree, ContStyle, PreOrderIter
 
 VERBOSE = False
 
-class ExitCodes:
-    GITBOOK_NOT_FOUND = 1
-
 class Config:
     DEFAULT_GITBOOK_DIR = os.getcwd()
     DEFAULT_ENTRY_TITLE_REGEX = '^#{1}(.*)$'
@@ -30,7 +27,7 @@ class Config:
 
         if not os.path.isdir(self.gitbook_dir):
             print('gitbook directory doesnt exist or isnt a directory', file=sys.stderr)
-            sys.exit(ExitCodes.GITBOOK_NOT_FOUND)
+            sys.exit(1)
 
         self.load_gitbook_json_config()
         self.load_arg_parse_config(args)
@@ -174,6 +171,8 @@ if __name__ == '__main__':
     rendered = []
     for node in PreOrderIter(root_section, filter_=lambda n: n not in rendered):
         print(node.render(config))
+        if isinstance(node, Section) and len(node.children) == 0:
+            print('Coming soon')
         if config.sort_entry_by_title:
             if isinstance(node, Section):
                 titles = []
