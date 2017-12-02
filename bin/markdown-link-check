@@ -1,18 +1,77 @@
 #!/usr/bin/env python
 
-import os, argparse, fnmatch, re, urllib2
+import os, argparse, fnmatch, re, urllib2, socket, ssl
 from tqdm import tqdm
 
 SIMPLE_URL_REGEX = 'http[s]?://[^)]+'
 MARKDOWN_LINK_REGEX = '\[([^]]+)]\((.*?)\)'
 RELATIVE_PATH_REGEX = '^(.+)/([^/]+)$'
 
-HTTP_LINK_COUNT = 0
-HTTP_LINK_ERRORS = []
-RELATIVE_LINK_COUNT = 0
-RELATIVE_LINK_ERRORS = []
-
 VERBOSE = False
+
+def log(msg):
+    if VERBOSE:
+        print(msg)
+
+class Link:
+    RELATIVE = 1
+    WEB_URL = 2
+    UNKNOWN = 3
+
+    def __init__(self, source_file, line_number, link):
+        self.source_file = source_file
+        self.line_number = line_number
+        self.link = link
+        self.http_response_code = None
+
+    def get_absolute_link(self):
+        return os.path.abspath(os.path.join('/'.join(self.source_file.split('/')[:-1]), self.link))
+
+    def validate_website(self, timeout):
+        req = urllib2.Request(self.link, headers={'User-Agent' : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.75.14 (KHTML, like Gecko) Version/7.0.3 Safari/7046A194A"})
+        try:
+            con = urllib2.urlopen(req, timeout=timeout)
+            con.read()
+            self.http_response_code = con.getcode()
+        except Exception as e:
+            if isinstance(e, ssl.SSLError) or isinstance(e, socket.timeout) or isinstance(e.reason, socket.timeout):
+                log('{} timeout'.format(self.link))
+                self.http_response_code = 504
+            else:
+                log('{} unexpected http error: {}'.format(self.link, e))
+                self.http_response_code = 500
+        log('{} {}'.format(self.link, self.http_response_code))
+        return self.http_response_code == 200
+
+    def validate_filepath(self):
+        abs_path = self.get_absolute_link()
+        log('relative path {} converted to absolute path {}'.format(self.link, abs_path))
+        return os.path.isfile(abs_path)
+
+    def type(self):
+        if re.match(SIMPLE_URL_REGEX, self.link):
+            return Link.WEB_URL
+        elif re.match(RELATIVE_PATH_REGEX, self.link):
+            return Link.RELATIVE
+        else:
+            return Link.UNKNOWN
+
+    def is_broken(self, validate_website=False, timeout=5):
+        if self.type() == Link.WEB_URL:
+            if validate_website:
+                return self.validate_website(timeout) == False
+            else:
+                return False
+        elif self.type() == Link.RELATIVE:
+            return self.validate_filepath() == False
+        else:
+            log('Unrecognized link type {}, assuming unbroken'.format(self.link))
+
+    def __str__(self):
+        return '{} line {}: {}'.format(self.source_file, self.line_number, self.link)
+
+    def __repr__(self):
+        return str(self)
 
 def setup_arg_parser():
     parser = argparse.ArgumentParser(prog='markdown-link-check', formatter_class=argparse.ArgumentDefaultsHelpFormatter, description='Traverse a directory structure for markdown files and validate links contained within. If the link is a relative file path, it will validate the it goes to an actual file on the filesystem. If the link is a url, you can optionally hit the webpage to see if its alive.')
@@ -20,12 +79,9 @@ def setup_arg_parser():
     parser.add_argument('--include-hidden', action='store_true', default=False, help='include hidden (files and dirs that start with \'.\') to search')
     parser.add_argument('--match', default='*.md', help='re pattern to find files to validate')
     parser.add_argument('--validate-website', action='store_true', default=False, help='whether to validate that an http url is alive')
+    parser.add_argument('--timeout', type=int, default=5, help='timeout to use when validating website url. (default: 5 seconds)')
     parser.add_argument('-v', action='store_true', default=False, help='enable verbose output')
     return parser
-
-def log(msg):
-    if VERBOSE:
-        print(msg)
 
 def file_list(root, include_hidden, match):
     found = []
@@ -38,54 +94,57 @@ def file_list(root, include_hidden, match):
         found.extend([os.path.join(path, f) for f in fnmatch.filter(files, match)])
     return found
 
-def get_path(abs_path):
-    return '/'.join(abs_path.split('/')[:-1]) #yuck
+def extract_links(abs_file_paths):
+    links = []
+    for path in abs_file_paths:
+        line_number = 1
+        with open(path) as f:
+            for line in f:
+                for match in re.findall(MARKDOWN_LINK_REGEX, line):
+                    link = Link(path, line_number, match[1])
+                    log(str(link))
+                    links.append(link)
+    return links
 
-def validate_links(abs_file_path, validate_website):
-    global HTTP_LINK_COUNT
-    global HTTP_LINK_ERRORS
-    global RELATIVE_LINK_COUNT
-    global RELATIVE_LINK_ERRORS
-    line_number = 1
-    with open(abs_file_path) as f:
-        for line in f:
-            for match in re.findall(MARKDOWN_LINK_REGEX, line):
-                log('found a link in {} line {}: {}'.format(abs_file_path, line_number, match[1]))
-                if re.match(SIMPLE_URL_REGEX, match[1]):
-                    HTTP_LINK_COUNT += 1
-                    if validate_website:
-                        req = urllib2.Request(match[1], headers={'User-Agent' : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.75.14 (KHTML, like Gecko) Version/7.0.3 Safari/7046A194A"})
-                        con = urllib2.urlopen(req)
-                        con.read()
-                        status = con.getcode()
-                        if status is 200:
-                            log(match[1] + ' 200 OK')
-                        else:
-                            HTTP_LINK_ERRORS.append('{} line {}: {} {}'.format(abs_file_path, line_number, match[1], status))
-                elif re.match(RELATIVE_PATH_REGEX, match[1]):
-                    RELATIVE_LINK_COUNT += 1
-                    abs_path = os.path.abspath(os.path.join(get_path(abs_file_path), match[1]))
-                    log('relative path {} converted to absolute path {}'.format(match[1], abs_path))
-                    if not os.path.isfile(abs_path):
-                        RELATIVE_LINK_ERRORS.append('{} line {}: relative path {} converted to absolute path {} doesnt exist'.format(abs_file_path, line_number, match[1], abs_path))
-            line_number += 1
+def validate_links(links, validate_website, timeout):
+    http_link_count = 0
+    http_link_errors = 0
+    relative_link_count = 0
+    relative_link_errors = 0
+    unknown_link_type_count = 0
+    broken_web = []
+    broken_file = []
+
+    for link in tqdm(links):
+        if link.type() == Link.WEB_URL:
+            http_link_count += 1
+            if link.is_broken(validate_website, timeout):
+                http_link_errors += 1
+                broken_web.append(link)
+        elif link.type() == Link.RELATIVE:
+            relative_link_count += 1
+            if link.is_broken():
+                relative_link_errors += 1
+                broken_file.append(link)
+        else:
+            unknown_link_type_count += 1
+
+    print 'Total Links Found: {}'.format(http_link_count + relative_link_count + unknown_link_type_count)
+
+    print 'External Web Links: {}'.format(http_link_count)
+    print 'Broken External Web Links: {}'.format(http_link_errors)
+    for link in broken_web:
+        print '{} line {}: {} {}'.format(link.source_file, link.line_number, link.link, link.http_response_code)
+
+    print 'Internal Links: {}'.format(relative_link_count)
+    print 'Broken Internal Links: {}'.format(relative_link_errors)
+    for link in broken_file:
+        print '{} line {}: relative path {} converted to absolute path {} doesnt exist'.format(link.source_file, link.line_number, link.link, link.get_absolute_link())
+
+    print 'Unknown type links: {}'.format(unknown_link_type_count)
 
 if __name__ == '__main__':
     arg_parser = setup_arg_parser()
     args = arg_parser.parse_args()
     VERBOSE = args.v
-    for f in tqdm(file_list(args.directory, args.include_hidden, args.match)):
-        validate_links(f, args.validate_website)
-
-    print 'Total Links Found: {}'.format(HTTP_LINK_COUNT + RELATIVE_LINK_COUNT)
-    print 'External Web Links: {}'.format(HTTP_LINK_COUNT)
-    if args.validate_website:
-        print 'Broken External Web Links: {}'.format(len(HTTP_LINK_ERRORS))
-        for l in HTTP_LINK_ERRORS:
-            print l
-    else:
-        print 'Broken External Web Links: SKIPPED'
-    print 'Internal Links: {}'.format(RELATIVE_LINK_COUNT)
-    print 'Broken Internal Links: {}'.format(len(RELATIVE_LINK_ERRORS))
-    for l in RELATIVE_LINK_ERRORS:
-        print l
+    validate_links(extract_links(file_list(args.directory, args.include_hidden, args.match)), args.validate_website, args.timeout)
