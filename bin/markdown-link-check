@@ -67,6 +67,17 @@ class Link:
         else:
             log('Unrecognized link type {}, assuming unbroken'.format(self.link))
 
+    def suggestion(self, known_files, make_relative=True):
+        for f in known_files:
+            if os.path.basename(self.link) == os.path.basename(f):
+                if make_relative:
+                    return os.path.relpath(f, '/'.join(self.source_file.split('/')[:-1]))
+                else:
+                    return f
+
+    def make_relative_to(self, new_link):
+        return os.path.relpath(new_link, self.source_file)
+
     def __str__(self):
         return '{} line {}: {}'.format(self.source_file, self.line_number, self.link)
 
@@ -106,7 +117,7 @@ def extract_links(abs_file_paths):
                     links.append(link)
     return links
 
-def validate_links(links, validate_website, timeout):
+def validate_links(files, validate_website, timeout):
     http_link_count = 0
     http_link_errors = 0
     relative_link_count = 0
@@ -115,7 +126,7 @@ def validate_links(links, validate_website, timeout):
     broken_web = []
     broken_file = []
 
-    for link in tqdm(links):
+    for link in tqdm(extract_links(files)):
         if link.type() == Link.WEB_URL:
             http_link_count += 1
             if link.is_broken(validate_website, timeout):
@@ -140,6 +151,9 @@ def validate_links(links, validate_website, timeout):
     print 'Broken Internal Links: {}'.format(relative_link_errors)
     for link in broken_file:
         print '{} line {}: relative path {} converted to absolute path {} doesnt exist'.format(link.source_file, link.line_number, link.link, link.get_absolute_link())
+        suggestion = link.suggestion(files)
+        if suggestion is not None:
+            print 'Possibly moved to {}, suggest new relative path {}\n'.format(os.path.abspath(suggestion), suggestion)
 
     print 'Unknown type links: {}'.format(unknown_link_type_count)
 
@@ -147,4 +161,5 @@ if __name__ == '__main__':
     arg_parser = setup_arg_parser()
     args = arg_parser.parse_args()
     VERBOSE = args.v
-    validate_links(extract_links(file_list(args.directory, args.include_hidden, args.match)), args.validate_website, args.timeout)
+    files = file_list(args.directory, args.include_hidden, args.match)
+    validate_links(files, args.validate_website, args.timeout)
