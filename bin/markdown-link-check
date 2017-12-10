@@ -51,7 +51,7 @@ class Link:
     def type(self):
         if re.match(SIMPLE_URL_REGEX, self.link):
             return Link.WEB_URL
-        elif re.match(RELATIVE_PATH_REGEX, self.link):
+        elif re.match(RELATIVE_PATH_REGEX, self.link) or os.path.exists(self.get_absolute_link()):
             return Link.RELATIVE
         else:
             return Link.UNKNOWN
@@ -125,6 +125,7 @@ def validate_links(files, validate_website, timeout):
     unknown_link_type_count = 0
     broken_web = []
     broken_file = []
+    unknown = []
 
     for link in tqdm(extract_links(files)):
         if link.type() == Link.WEB_URL:
@@ -139,6 +140,7 @@ def validate_links(files, validate_website, timeout):
                 broken_file.append(link)
         else:
             unknown_link_type_count += 1
+            unknown.append(link)
 
     print 'Total Links Found: {}'.format(http_link_count + relative_link_count + unknown_link_type_count)
 
@@ -156,6 +158,8 @@ def validate_links(files, validate_website, timeout):
             print 'Possibly moved to {}, suggest new relative path {}\n'.format(os.path.abspath(suggestion), suggestion)
 
     print 'Unknown type links: {}'.format(unknown_link_type_count)
+    for link in unknown:
+        print '{} line {}: {}'.format(link.source_file, link.line_number, link.link)
 
 if __name__ == '__main__':
     arg_parser = setup_arg_parser()
