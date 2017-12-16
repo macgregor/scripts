@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import os, argparse, fnmatch, re, urllib2, socket, ssl
+import os, argparse, fnmatch, re, urllib2, socket, ssl, fileinput
 from tqdm import tqdm
 
 SIMPLE_URL_REGEX = 'http[s]?://[^)]+'
@@ -78,6 +78,21 @@ class Link:
     def make_relative_to(self, new_link):
         return os.path.relpath(new_link, self.source_file)
 
+    def fix(self, new_link):
+        current_line_number = 1
+        buff = []
+        with open(self.source_file, 'r') as f:
+            for line in f:
+                if current_line_number == self.line_number:
+                    log('replacing {} in file {} on line {} with {}'.format(self.link, self.source_file, self.line_number, new_link))
+                    buff.append(line.replace(self.link, new_link))
+                else:
+                    buff.append(line)
+                current_line_number += 1
+                
+        with open(self.source_file, 'w') as f:
+            f.write(''.join(buff))
+
     def __str__(self):
         return '{} line {}: {}'.format(self.source_file, self.line_number, self.link)
 
@@ -92,6 +107,7 @@ def setup_arg_parser():
     parser.add_argument('--validate-website', action='store_true', default=False, help='whether to validate that an http url is alive')
     parser.add_argument('--timeout', type=int, default=5, help='timeout to use when validating website url. (default: 5 seconds)')
     parser.add_argument('-v', action='store_true', default=False, help='enable verbose output')
+    parser.add_argument('-f', '--fix', action='store_true', default=False, help='have tool automatically fix broken links if it knows how (e.g. when a file moves location on the filesystem)')
     return parser
 
 def file_list(root, include_hidden, match):
@@ -115,9 +131,10 @@ def extract_links(abs_file_paths):
                     link = Link(path, line_number, match[1])
                     log(str(link))
                     links.append(link)
+                line_number += 1
     return links
 
-def validate_links(files, validate_website, timeout):
+def validate_links(files, validate_website, timeout, fix):
     http_link_count = 0
     http_link_errors = 0
     relative_link_count = 0
@@ -154,8 +171,8 @@ def validate_links(files, validate_website, timeout):
     for link in broken_file:
         print '{} line {}: relative path {} converted to absolute path {} doesnt exist'.format(link.source_file, link.line_number, link.link, link.get_absolute_link())
         suggestion = link.suggestion(files)
-        if suggestion is not None:
-            print 'Possibly moved to {}, suggest new relative path {}\n'.format(os.path.abspath(suggestion), suggestion)
+        if suggestion is not None and fix == True:
+            link.fix(suggestion)
 
     print 'Unknown type links: {}'.format(unknown_link_type_count)
     for link in unknown:
@@ -166,4 +183,4 @@ if __name__ == '__main__':
     args = arg_parser.parse_args()
     VERBOSE = args.v
     files = file_list(args.directory, args.include_hidden, args.match)
-    validate_links(files, args.validate_website, args.timeout)
+    validate_links(files, args.validate_website, args.timeout, args.fix)
