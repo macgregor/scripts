@@ -53,6 +53,9 @@ class Config:
         # enchant adds a newline to the custom word dictionary when you add to it
         # sometimes which causes a nasty looking warning to pop up.
         # this block removes empty lines from the dicitonary
+        if not os.path.exists(self.custom_word_dict):
+            f = open(self.custom_word_dict,"w")
+            f.close()
         f = open(self.custom_word_dict,"r+")
         lines = [line for line in f.readlines() if line.strip()]
         f.seek(0)
